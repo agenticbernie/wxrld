@@ -1,0 +1,29 @@
+{
+  "name": "wxrld",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:api": "tsx server/index.ts",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "test:unit": "tsx --test tests/*.test.ts src/**/*.test.ts",
+    "test:browser": "playwright test",
+    "assets:generate": "tsx scripts/generate-assets.ts"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@tailwindcss/vite": "4.1.13",
+    "@types/node": "24.5.2",
+    "@types/three": "0.180.0",
+    "tailwindcss": "4.1.13",
+    "tsx": "4.20.6",
+    "typescript": "5.9.2",
+    "vite": "7.3.8"
+  }
+}

@@ -1,0 +1,93 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { BALANCE, BUFF_IDS } from '../src/config/balance';
+import { GameEvents } from '../src/core/events';
+import { Rng } from '../src/core/rng';
+import { createProfile, createRunState, resetRunState } from '../src/core/state';
+import { extractionMultiplier, getPlayerStats, getUiSnapshot } from '../src/core/selectors';
+import { SpatialHash } from '../src/core/spatial-hash';
+import { segmentDistanceXZ } from '../src/core/math';
+
+test('seeded randomness is repeatable and rejects empty ranges', () => {
+  const a = new Rng(42);
+  const b = new Rng(42);
+  assert.deepEqual(Array.from({ length: 100 }, () => a.next()), Array.from({ length: 100 }, () => b.next()));
+  a.reset(42); b.reset(42);
+  assert.equal(a.int(3, 9), b.int(3, 9));
+  assert.throws(() => a.pick([]), RangeError);
+  assert.throws(() => a.int(2, 2), RangeError);
+});
+test('spatial hashing filters exact radius, moves entries and removes empty cells', () => {
+  const grid = new SpatialHash<string>(6);
+  grid.set('near', { x: 2, y: 80, z: 1 });
+  grid.set('far', { x: 8, y: 0, z: 0 });
+  assert.deepEqual(grid.query({ x: 0, y: 0, z: 0 }, 3), ['near']);
+  grid.set('near', { x: -20, y: 0, z: -20 });
+  assert.deepEqual(grid.query({ x: 0, y: 0, z: 0 }, 3), []);
+  grid.remove('far'); grid.clear();
+  assert.deepEqual(grid.query({ x: -20, y: 0, z: -20 }, 100), []);
+});
+test('reset preserves shared state, profile and options while clearing run rewards', () => {
+  const profile = createProfile();
+  profile.skills.vitality = 3;
+  profile.skills.endurance = 2;
+  profile.skills.supply = 1;
+  profile.soulShards = 90;
+  const state = createRunState(profile);
+  state.settings.muted = true;
+  state.materials.soulShards = 400;
+  resetRunState(state, 17, 'run-17');
+  assert.equal(state.profile, profile);
+  assert.equal(state.player.hp, 115);
+  assert.equal(state.player.maxStamina, 110);
+  assert.equal(state.player.arrows, 15);
+  assert.equal(state.materials.soulShards, 0);
+  assert.equal(profile.soulShards, 90);
+  assert.equal(state.settings.muted, true);
+  assert.equal(state.runId, 'run-17');
+  assert.equal(Object.keys(state.buffs).length, 12);
+});
+test('Overdrive applies exactly once and combines bounded buff math', () => {
+  const state = createRunState(createProfile());
+  const normal = getPlayerStats(state);
+  state.player.overdrive = true;
+  const overdrive = getPlayerStats(state);
+  assert.equal(overdrive.attackRate / normal.attackRate, 3);
+  assert.equal(overdrive.meleeDamage / normal.meleeDamage, 2.5);
+  assert.equal(overdrive.lifestealFraction, 0.02);
+  for (const id of BUFF_IDS) state.buffs[id] = 5;
+  const stacked = getPlayerStats(state);
+  assert.equal(stacked.lifestealFraction, 0.06);
+  assert.equal(stacked.critChance, 0.3);
+  assert.equal(stacked.damageReduction, 0.2);
+  assert.equal(stacked.pickupRadius, 9.5);
+  assert.equal(stacked.attackRate, 7.5);
+  assert.equal(stacked.staminaCostMultiplier, 0.8);
+});
+test('extraction tiers do not recursively compound and UI snapshots copy economy', () => {
+  assert.deepEqual([1, 2, 3, 4, 100].map(extractionMultiplier), [1.5, 2.5, 5, 5, 5]);
+  const state = createRunState(createProfile());
+  state.materials.soulShards = 7;
+  const snapshot = getUiSnapshot(state);
+  assert.equal(snapshot.projectedSouls, 10);
+  snapshot.materials.soulShards = 900;
+  snapshot.profile.skills.vitality = 3;
+  assert.equal(state.materials.soulShards, 7);
+  assert.equal(state.profile.skills.vitality, 0);
+  assert.equal(BALANCE.extraction.daySeconds + BALANCE.extraction.nightSeconds, 150);
+});
+test('events dispatch synchronously and unsubscribe safely', () => {
+  const events = new GameEvents();
+  let total = 0;
+  const stop = events.on('threat:changed', payload => { total = payload.value; });
+  events.emit('threat:changed', { value: 40, healBlockedUntil: 20 });
+  assert.equal(total, 40);
+  stop();
+  events.emit('threat:changed', { value: 90, healBlockedUntil: 30 });
+  assert.equal(total, 40);
+  events.clear();
+});
+test('swept collision measures line segment rather than endpoint proximity', () => {
+  assert.equal(segmentDistanceXZ({ x: 5, y: 0, z: 1 }, { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }), 1);
+  assert.equal(segmentDistanceXZ({ x: 15, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }), 5);
+});

@@ -1,0 +1,70 @@
+import { test, expect } from '@playwright/test';
+
+const idle = { moveX: 0, moveZ: 0, aimGround: null, sprintHeld: false, dashPressed: false, meleeHeld: false, rangedHeld: false, rangedReleased: false, magicPressed: false, interactHeld: false, interactPressed: false, bandagePressed: false, pausePressed: false };
+
+test('title, sanctuary, controls, crafting, Overdrive and extraction form a working offline loop', async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  await page.goto('/');
+  await expect(page.getByTestId('title-screen')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('title.png') });
+  await page.getByTestId('enter-hub').click();
+  await expect(page.getByTestId('hub-screen')).toBeVisible();
+  await page.getByRole('button', { name: 'Preview', exact: true }).first().click();
+  await expect(page.getByText('Procedural silhouette forged locally. No provider request or payment.')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('sanctuary.png') });
+  await page.getByTestId('start-run').click();
+  await expect(page.getByTestId('run-hud')).toBeVisible();
+  const initial = await page.evaluate(() => ({ ...window.__WXRLD__!.state.player.position }));
+  await page.keyboard.down('d');
+  await expect.poll(() => page.evaluate(() => window.__WXRLD__!.state.player.position.x)).toBeGreaterThan(initial.x + 0.1);
+  await page.keyboard.up('d');
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('pause-screen')).toBeVisible();
+  const pausedAt = await page.evaluate(() => window.__WXRLD__!.state.elapsedSeconds);
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => window.__WXRLD__!.state.elapsedSeconds)).toBe(pausedAt);
+  await page.getByRole('button', { name: 'Return to the fight' }).click();
+  await expect(page.getByTestId('pause-screen')).toHaveCount(0);
+  await page.evaluate(() => { const state = window.__WXRLD__!.state; state.materials.wood = 6; state.materials.stone = 8; });
+  await page.keyboard.press('1');
+  await expect.poll(() => page.evaluate(() => window.__WXRLD__!.state.player.toolTier)).toBe('stone');
+  await page.evaluate(() => { const state = window.__WXRLD__!.state; state.player.hp = 29; state.passiveHealBlockedUntil = state.elapsedSeconds + 30; });
+  await expect(page.getByText('BLOOD OVERDRIVE · 3× RATE / 2.5× DAMAGE')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('island.png') });
+  await page.evaluate(() => {
+    const debug = window.__WXRLD__!;
+    debug.state.player.hp = debug.state.player.maxHp;
+    debug.state.materials.soulShards = 7;
+    debug.step(150 - debug.state.elapsedSeconds, undefined, false);
+    if (!debug.state.beacon) throw new Error('Beacon did not open.');
+    Object.assign(debug.state.player.position, debug.state.beacon.position);
+    debug.state.player.velocity = { x: 0, y: 0, z: 0 };
+    debug.state.enemies.clear(); debug.state.projectiles.clear();
+  });
+  await page.evaluate(frame => window.__WXRLD__!.step(10.1, { ...frame, interactHeld: true }, false), idle);
+  await expect(page.getByTestId('summary-screen')).toBeVisible();
+  await expect(page.getByText('You made it home.')).toBeVisible();
+  expect(await page.evaluate(() => window.__WXRLD__!.state.result?.bankedSouls)).toBe(10);
+  const banked = await page.evaluate(() => window.__WXRLD__!.state.profile.soulShards);
+  await page.screenshot({ path: testInfo.outputPath('extraction.png') });
+  await page.getByRole('button', { name: 'Return to Sanctuary' }).click();
+  await expect(page.getByTestId('hub-screen')).toBeVisible();
+  await page.reload();
+  await page.getByTestId('enter-hub').click();
+  expect(await page.evaluate(() => window.__WXRLD__!.state.profile.soulShards)).toBe(banked);
+  const diagnostics = await page.evaluate(() => window.__WXRLD__!.diagnostics());
+  expect(diagnostics.shaderErrors).toEqual([]);
+  expect(diagnostics.postprocessingError).toBeNull();
+  expect(diagnostics.drawCalls).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test('phone viewport stays within its width and offers a desktop-controls notice', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await expect(page.getByTestId('title-screen')).toBeVisible();
+  await expect(page.getByText('Keyboard and mouse required. Desktop recommended.')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
